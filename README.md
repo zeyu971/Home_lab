@@ -7,6 +7,7 @@ Le but pouvoir déployé ou rédéployé une infrastructure en tapant quelque li
 
 
 
+
 docker run -it --name alpine-iso -v "$PWD/out:/out" alpine:latest sh
 
 
@@ -52,7 +53,7 @@ chmod +x genapkovl-custom.sh
 
 mkdir -p /out
 sh mkimage.sh \
-  --tag 3.22 \
+  --tag 3.24 \
   --outdir /out \
   --arch x86_64 \
   --repository https://dl-cdn.alpinelinux.org/alpine/v3.22/main \
