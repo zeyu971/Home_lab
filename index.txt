@@ -27,7 +27,7 @@ profile_custom() {
 	profile_standard
 	title="Mon Alpine perso"
 	desc="ISO Alpine personnalisée"
-	kernel_cmdline="console=tty0 console=ttyS0,115200"
+	kernel_cmdline=""
 	syslinux_serial="0 115200"
 	# Paquets ajoutés à l'ISO
 	apks="$apks nano htop curl git openssh bash docker"
@@ -43,7 +43,7 @@ chmod +x genapkovl-custom.sh
 
 mkdir -p /out
 sh mkimage.sh \
-  --tag 3.24 \
+  --tag 3.22 \
   --outdir /out \
   --arch x86_64 \
   --repository https://dl-cdn.alpinelinux.org/alpine/v3.22/main \
@@ -56,3 +56,10 @@ docker cp alpine-iso:/out/ ./out/
 
 
 python3 -m http.server 8000
+
+
+
+
+
+
+

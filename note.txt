@@ -1,0 +1,152 @@
+cat > genapkovl-custom.sh << 'SCRIPT'
+#!/bin/sh -e
+
+HOSTNAME="$1"
+if [ -z "$HOSTNAME" ]; then
+	echo "usage: $0 hostname"
+	exit 1
+fi
+
+# Nom de la machine
+MYHOST="mon-alpine"
+
+cleanup() {
+	rm -rf "$tmp"
+}
+
+makefile() {
+	OWNER="$1"
+	PERMS="$2"
+	FILENAME="$3"
+	cat > "$FILENAME"
+	chown "$OWNER" "$FILENAME"
+	chmod "$PERMS" "$FILENAME"
+}
+
+rc_add() {
+	mkdir -p "$tmp"/etc/runlevels/"$2"
+	ln -sf /etc/init.d/"$1" "$tmp"/etc/runlevels/"$2"/"$1"
+}
+
+tmp="$(mktemp -d)"
+trap cleanup EXIT
+
+# --- Nom de machine ---
+mkdir -p "$tmp"/etc
+makefile root:root 0644 "$tmp"/etc/hostname <<EOF
+$MYHOST
+EOF
+
+# --- Réseau en DHCP ---
+mkdir -p "$tmp"/etc/network
+makefile root:root 0644 "$tmp"/etc/network/interfaces <<EOF
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+EOF
+
+# --- Paquets installés au démarrage ---
+mkdir -p "$tmp"/etc/apk
+makefile root:root 0644 "$tmp"/etc/apk/world <<EOF
+alpine-base
+nano
+htop
+curl
+git
+openssh
+bash
+docker
+e2fsprogs
+sfdisk
+EOF
+
+# --- lbu sauvegarde sur sda1 ---
+mkdir -p "$tmp"/etc/lbu
+makefile root:root 0644 "$tmp"/etc/lbu/lbu.conf <<EOF
+LBU_MEDIA=sda1
+EOF
+
+# --- Démarrage : prépare et monte le disque de persistance ---
+mkdir -p "$tmp"/etc/local.d
+makefile root:root 0755 "$tmp"/etc/local.d/persist.start <<'EOF'
+#!/bin/sh
+DISK=/dev/sda
+PART=/dev/sda1
+MNT=/media/sda1
+
+[ -b "$DISK" ] || exit 0
+
+# Formate UNIQUEMENT si le disque est totalement vierge
+if [ ! -b "$PART" ]; then
+	if [ -z "$(blkid "$DISK")" ]; then
+		echo ">> Disque vierge détecté, préparation de $DISK"
+		echo ',,L' | sfdisk -q "$DISK"
+		partx -a "$DISK" 2>/dev/null
+		mdev -s
+		sleep 2
+		mkfs.ext4 -q -L ALPDATA "$PART"
+	else
+		echo ">> $DISK contient déjà des données, je n'y touche pas"
+		exit 0
+	fi
+fi
+
+grep -q "^$PART " /etc/fstab || echo "$PART $MNT ext4 noatime,rw 0 0" >> /etc/fstab
+mkdir -p "$MNT"
+mountpoint -q "$MNT" || mount "$MNT"
+
+# Cache des paquets sur le disque
+mkdir -p "$MNT/cache"
+if [ ! -L /etc/apk/cache ]; then
+	rm -rf /etc/apk/cache
+	ln -s "$MNT/cache" /etc/apk/cache
+fi
+apk cache sync >/dev/null 2>&1 || true
+
+# Première sauvegarde si aucune n'existe
+ls "$MNT"/*.apkovl.tar.gz >/dev/null 2>&1 || lbu commit -d
+EOF
+
+# --- Arrêt : sauvegarde ---
+makefile root:root 0755 "$tmp"/etc/local.d/persist.stop <<'EOF'
+#!/bin/sh
+mountpoint -q /media/sda1 && lbu commit -d
+EOF
+
+# --- Toutes les 15 min : sauvegarde si quelque chose a changé ---
+mkdir -p "$tmp"/etc/periodic/15min
+makefile root:root 0755 "$tmp"/etc/periodic/15min/lbu-autocommit <<'EOF'
+#!/bin/sh
+mountpoint -q /media/sda1 || exit 0
+[ -n "$(lbu status 2>/dev/null)" ] && lbu commit -d
+EOF
+
+# --- Services ---
+rc_add devfs sysinit
+rc_add dmesg sysinit
+rc_add mdev sysinit
+rc_add hwdrivers sysinit
+rc_add modloop sysinit
+
+rc_add hwclock boot
+rc_add modules boot
+rc_add sysctl boot
+rc_add hostname boot
+rc_add bootmisc boot
+rc_add syslog boot
+rc_add networking boot
+
+rc_add local default
+rc_add crond default
+rc_add sshd default
+rc_add docker default
+
+rc_add mount-ro shutdown
+rc_add killprocs shutdown
+rc_add savecache shutdown
+
+tar -c -C "$tmp" etc | gzip -9n > $HOSTNAME.apkovl.tar.gz
+SCRIPT
+chmod +x genapkovl-custom.sh
