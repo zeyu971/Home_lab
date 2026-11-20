@@ -53,7 +53,7 @@ chmod +x genapkovl-custom.sh
 
 mkdir -p /out
 sh mkimage.sh \
-  --tag 3.24 \
+  --tag 3.22 \
   --outdir /out \
   --arch x86_64 \
   --repository https://dl-cdn.alpinelinux.org/alpine/v3.22/main \
