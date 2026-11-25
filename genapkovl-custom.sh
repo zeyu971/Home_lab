@@ -63,7 +63,7 @@ mkdir -p "$tmp"/etc/deploy "$tmp"/etc/local.d "$tmp"/etc/crontabs
 
 makefile root:root 0644 "$tmp"/etc/deploy/config <<'EOF'
 REPO="https://github.com/zeyu971/Home_lab/Docker"
-BRANCH="main"
+BRANCH="dev"
 DIR="/var/lib/docker/depot"
 EOF
 
