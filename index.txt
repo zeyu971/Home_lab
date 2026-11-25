@@ -30,7 +30,7 @@ profile_custom() {
 	kernel_cmdline=""
 	syslinux_serial="0 115200"
 	# Paquets ajoutés à l'ISO
-	apks="$apks nano htop curl git openssh bash docker"
+	apks="$apks nano htop curl git openssh docker docker-cli-compose"
 	# Overlay de configuration (optionnel, voir étape 5)
 	apkovl="genapkovl-custom.sh"
 }
