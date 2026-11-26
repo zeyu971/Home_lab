@@ -30,10 +30,9 @@ profile_custom() {
 	kernel_cmdline=""
 	syslinux_serial="0 115200"
 	# Paquets ajoutés à l'ISO
-	apks="$apks nano htop curl git openssh docker docker-cli-compose python3 ansible-core
-		podman fuse-overlayfs slirp4netns crun kbd-bkeymaps"
+	apks="$apks nano htop curl git openssh docker docker-cli-compose python3 ansible-core podman fuse-overlayfs slirp4netns crun kbd-bkeymaps"
 	# Overlay de configuration (optionnel, voir étape 5)
-	apkovl="genapkovl-ops.sh"
+	apkovl="/aports/scripts/genapkovl-ops.sh"
 }
 EOF
 
