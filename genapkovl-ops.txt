@@ -1,0 +1,124 @@
+cat > mkimg.custom.sh << 'EOF'
+#!/bin/sh -e
+
+HOSTNAME="$1"
+[ -n "$HOSTNAME" ] || { echo "usage: $0 hostname"; exit 1; }
+
+ANSIBLE_REPO="https://github.com/TON_COMPTE/ton-repo-ansible.git"
+ANSIBLE_BRANCH="main"
+RELEASE_REPO="v3.22"   # mets ici la dernière branche stable d'Alpine (ou "edge")
+
+cleanup() { rm -rf "$tmp"; }
+makefile() {
+	OWNER="$1"; PERMS="$2"; FILENAME="$3"
+	cat > "$FILENAME"
+	chown "$OWNER" "$FILENAME"
+	chmod "$PERMS" "$FILENAME"
+}
+rc_add() {
+	mkdir -p "$tmp"/etc/runlevels/"$2"
+	ln -sf /etc/init.d/"$1" "$tmp"/etc/runlevels/"$2"/"$1"
+}
+
+tmp="$(mktemp -d)"
+trap cleanup EXIT
+
+mkdir -p "$tmp"/etc
+makefile root:root 0644 "$tmp"/etc/hostname <<EOF
+$HOSTNAME
+EOF
+
+# Réseau en DHCP
+mkdir -p "$tmp"/etc/network
+makefile root:root 0644 "$tmp"/etc/network/interfaces <<EOF
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+EOF
+
+# Paquets installés automatiquement au boot
+mkdir -p "$tmp"/etc/apk
+makefile root:root 0644 "$tmp"/etc/apk/world <<EOF
+alpine-base
+openssh
+chrony
+git
+ansible-core
+python3
+podman
+fuse-overlayfs
+slirp4netns
+crun
+docker
+docker-cli-compose
+EOF
+
+makefile root:root 0644 "$tmp"/etc/apk/repositories <<EOF
+/media/cdrom/apks
+https://dl-cdn.alpinelinux.org/alpine/$RELEASE_REPO/main
+https://dl-cdn.alpinelinux.org/alpine/$RELEASE_REPO/community
+EOF
+
+# Configuration ansible-pull
+mkdir -p "$tmp"/etc/conf.d
+makefile root:root 0644 "$tmp"/etc/conf.d/ansible-pull <<EOF
+ANSIBLE_REPO="$ANSIBLE_REPO"
+ANSIBLE_BRANCH="$ANSIBLE_BRANCH"
+ANSIBLE_DIR="/var/lib/ansible-pull"
+ANSIBLE_PLAYBOOK="local.yml"
+EOF
+
+# ansible-pull au démarrage (attend le réseau, tourne en arrière-plan)
+mkdir -p "$tmp"/etc/local.d
+makefile root:root 0755 "$tmp"/etc/local.d/ansible-pull.start <<'EOF'
+#!/bin/sh
+. /etc/conf.d/ansible-pull
+(
+  for i in $(seq 1 60); do
+    ping -c1 -W2 dl-cdn.alpinelinux.org >/dev/null 2>&1 && break
+    sleep 5
+  done
+  ansible-pull -U "$ANSIBLE_REPO" -C "$ANSIBLE_BRANCH" -d "$ANSIBLE_DIR" \
+    -i localhost, "$ANSIBLE_PLAYBOOK" >> /var/log/ansible-pull.log 2>&1
+) &
+EOF
+
+# ansible-pull toutes les heures, seulement si le dépôt a changé (-o)
+mkdir -p "$tmp"/etc/periodic/hourly
+makefile root:root 0755 "$tmp"/etc/periodic/hourly/ansible-pull <<'EOF'
+#!/bin/sh
+. /etc/conf.d/ansible-pull
+ansible-pull -o -U "$ANSIBLE_REPO" -C "$ANSIBLE_BRANCH" -d "$ANSIBLE_DIR" \
+  -i localhost, "$ANSIBLE_PLAYBOOK" >> /var/log/ansible-pull.log 2>&1
+EOF
+
+# Services système
+rc_add devfs sysinit
+rc_add dmesg sysinit
+rc_add mdev sysinit
+rc_add hwdrivers sysinit
+rc_add modloop sysinit
+
+rc_add hwclock boot
+rc_add modules boot
+rc_add sysctl boot
+rc_add hostname boot
+rc_add bootmisc boot
+rc_add syslog boot
+rc_add networking boot
+
+rc_add cgroups default
+rc_add chronyd default
+rc_add sshd default
+rc_add crond default
+rc_add docker default     # retire cette ligne si tu n'utilises que podman
+rc_add local default
+
+rc_add mount-ro shutdown
+rc_add killprocs shutdown
+rc_add savecache shutdown
+
+tar -c -C "$tmp" etc | gzip -9n > $HOSTNAME.apkovl.tar.gz
+EOF
