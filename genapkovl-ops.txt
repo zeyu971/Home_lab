@@ -1,12 +1,12 @@
-cat > mkimg.custom.sh << 'EOF'
+cat > genapkovl-ops.sh << 'GENEOF'
 #!/bin/sh -e
 
 HOSTNAME="$1"
 [ -n "$HOSTNAME" ] || { echo "usage: $0 hostname"; exit 1; }
 
-ANSIBLE_REPO="https://github.com/TON_COMPTE/ton-repo-ansible.git"
-ANSIBLE_BRANCH="main"
-RELEASE_REPO="v3.22"   # mets ici la dernière branche stable d'Alpine (ou "edge")
+ANSIBLE_REPO="https://github.com/zeyu971/Home_lab.git"
+ANSIBLE_BRANCH="dev"
+RELEASE_REPO="v3.24"  
 
 cleanup() { rm -rf "$tmp"; }
 makefile() {
@@ -85,6 +85,11 @@ makefile root:root 0755 "$tmp"/etc/local.d/ansible-pull.start <<'EOF'
 ) &
 EOF
 
+# Clavier français
+makefile root:root 0644 "$tmp"/etc/conf.d/loadkmap <<EOF
+KEYMAP=/usr/share/bkeymaps/fr/fr-azerty.bmap.gz
+EOF
+
 # ansible-pull toutes les heures, seulement si le dépôt a changé (-o)
 mkdir -p "$tmp"/etc/periodic/hourly
 makefile root:root 0755 "$tmp"/etc/periodic/hourly/ansible-pull <<'EOF'
@@ -120,5 +125,8 @@ rc_add mount-ro shutdown
 rc_add killprocs shutdown
 rc_add savecache shutdown
 
+rc_add loadkmap boot # clavier FR
+
 tar -c -C "$tmp" etc | gzip -9n > $HOSTNAME.apkovl.tar.gz
-EOF
+GENEOF
+chmod +x genapkovl-ops.sh

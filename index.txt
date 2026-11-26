@@ -30,24 +30,26 @@ profile_custom() {
 	kernel_cmdline=""
 	syslinux_serial="0 115200"
 	# Paquets ajoutés à l'ISO
-	apks="$apks nano htop curl git openssh docker docker-cli-compose"
+	apks="$apks nano htop curl git openssh docker docker-cli-compose python3 ansible-core
+		podman fuse-overlayfs slirp4netns crun kbd-bkeymaps"
 	# Overlay de configuration (optionnel, voir étape 5)
-	apkovl="genapkovl-custom.sh"
+	apkovl="genapkovl-ops.sh"
 }
 EOF
 
 cp genapkovl-dhcp.sh genapkovl-custom.sh
-chmod +x genapkovl-custom.sh
+chmod +x genapkovl-ops.sh
+
 
 
 
 mkdir -p /out
 sh mkimage.sh \
-  --tag 3.22 \
+  --tag 3.24 \
   --outdir /out \
   --arch x86_64 \
-  --repository https://dl-cdn.alpinelinux.org/alpine/v3.22/main \
-  --repository https://dl-cdn.alpinelinux.org/alpine/v3.22/community \
+  --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
+  --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
   --profile custom
 
 
