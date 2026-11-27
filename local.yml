@@ -1,0 +1,9 @@
+- hosts: localhost
+  connection: local
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Test ansible-pull
+      ansible.builtin.copy:
+        dest: /root/ansible-pull-ok
+        content: "Configuré par ansible-pull le {{ ansible_date_time.iso8601 }}\n"

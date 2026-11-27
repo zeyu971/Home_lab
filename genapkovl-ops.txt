@@ -132,3 +132,212 @@ rc_add loadkmap boot # clavier FR
 tar -c -C "$tmp" etc | gzip -9n > $HOSTNAME.apkovl.tar.gz
 GENEOF
 chmod +x genapkovl-ops.sh
+
+
+
+
+
+
+
+
+
+
+
+
+
+cat > genapkovl-ops.sh << 'GENEOF'
+#!/bin/sh -e
+
+HOSTNAME="$1"
+[ -n "$HOSTNAME" ] || { echo "usage: $0 hostname"; exit 1; }
+
+GIT_REPO="https://github.com/zeyu971/Home_lab.git"
+GIT_BRANCH="dev"
+RELEASE_REPO="v3.24"
+
+cleanup() { rm -rf "$tmp"; }
+makefile() {
+	OWNER="$1"; PERMS="$2"; FILENAME="$3"
+	cat > "$FILENAME"
+	chown "$OWNER" "$FILENAME"
+	chmod "$PERMS" "$FILENAME"
+}
+rc_add() {
+	mkdir -p "$tmp"/etc/runlevels/"$2"
+	ln -sf /etc/init.d/"$1" "$tmp"/etc/runlevels/"$2"/"$1"
+}
+
+tmp="$(mktemp -d)"
+trap cleanup EXIT
+
+# ---------------------------------------------------------------
+# Nom d'hôte
+# ---------------------------------------------------------------
+mkdir -p "$tmp"/etc
+makefile root:root 0644 "$tmp"/etc/hostname <<EOF
+$HOSTNAME
+EOF
+
+# ---------------------------------------------------------------
+# Réseau en DHCP
+# ---------------------------------------------------------------
+mkdir -p "$tmp"/etc/network
+makefile root:root 0644 "$tmp"/etc/network/interfaces <<EOF
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+EOF
+
+# ---------------------------------------------------------------
+# Paquets installés automatiquement au boot
+# ---------------------------------------------------------------
+mkdir -p "$tmp"/etc/apk
+makefile root:root 0644 "$tmp"/etc/apk/world <<EOF
+alpine-base
+kbd-bkeymaps
+openssh
+chrony
+nano
+htop
+curl
+git
+docker
+docker-cli-compose
+EOF
+
+makefile root:root 0644 "$tmp"/etc/apk/repositories <<EOF
+/media/cdrom/apks
+https://dl-cdn.alpinelinux.org/alpine/$RELEASE_REPO/main
+https://dl-cdn.alpinelinux.org/alpine/$RELEASE_REPO/community
+EOF
+
+# ---------------------------------------------------------------
+# Clavier français
+# ---------------------------------------------------------------
+mkdir -p "$tmp"/etc/conf.d
+makefile root:root 0644 "$tmp"/etc/conf.d/loadkmap <<EOF
+KEYMAP=/usr/share/bkeymaps/fr/fr-azerty.bmap.gz
+EOF
+
+# ---------------------------------------------------------------
+# Configuration git + compose
+# ---------------------------------------------------------------
+makefile root:root 0644 "$tmp"/etc/conf.d/git-compose <<EOF
+GIT_REPO="$GIT_REPO"
+GIT_BRANCH="$GIT_BRANCH"
+GIT_DIR="/var/lib/homelab"
+COMPOSE_SUBDIR="docker"
+EOF
+
+# ---------------------------------------------------------------
+# Script : clone/pull du dépôt puis lancement des compose
+# Usage : git-compose-sync [--force]
+# ---------------------------------------------------------------
+mkdir -p "$tmp"/usr/local/bin
+makefile root:root 0755 "$tmp"/usr/local/bin/git-compose-sync <<'EOF'
+#!/bin/sh
+. /etc/conf.d/git-compose
+exec >>/var/log/git-compose.log 2>&1
+
+# Empêche deux exécutions simultanées (boot + cron)
+exec 9>/run/git-compose.lock
+flock -n 9 || { echo "déjà en cours"; exit 0; }
+
+echo "=== $(date '+%F %T') ==="
+CHANGED=0
+
+if [ -d "$GIT_DIR/.git" ]; then
+  OLD=$(git -C "$GIT_DIR" rev-parse HEAD)
+  git -C "$GIT_DIR" pull --ff-only origin "$GIT_BRANCH" || { echo "échec du pull"; exit 1; }
+  NEW=$(git -C "$GIT_DIR" rev-parse HEAD)
+  [ "$OLD" != "$NEW" ] && CHANGED=1
+else
+  git clone --branch "$GIT_BRANCH" "$GIT_REPO" "$GIT_DIR" || { echo "échec du clone"; exit 1; }
+  CHANGED=1
+fi
+
+if [ "$CHANGED" = 0 ] && [ "$1" != "--force" ]; then
+  echo "aucun changement"
+  exit 0
+fi
+
+# Attend que le démon docker soit prêt
+for i in $(seq 1 30); do
+  docker info >/dev/null 2>&1 && break
+  sleep 2
+done
+
+# Lance chaque fichier compose trouvé dans docker/ (et ses sous-dossiers directs)
+find "$GIT_DIR/$COMPOSE_SUBDIR" -maxdepth 2 \
+  \( -name 'compose.yml' -o -name 'compose.yaml' \
+     -o -name 'docker-compose.yml' -o -name 'docker-compose.yaml' \) |
+while read -r f; do
+  dir=$(dirname "$f")
+  project=$(basename "$dir")
+  echo "--> $project ($f)"
+  docker compose -p "$project" -f "$f" --project-directory "$dir" \
+    up -d --pull missing --remove-orphans
+done
+EOF
+
+# ---------------------------------------------------------------
+# Au boot : attend le réseau puis clone + lance tout (en arrière-plan)
+# ---------------------------------------------------------------
+mkdir -p "$tmp"/etc/local.d
+makefile root:root 0755 "$tmp"/etc/local.d/git-compose.start <<'EOF'
+#!/bin/sh
+(
+  for i in $(seq 1 60); do
+    ping -c1 -W2 github.com >/dev/null 2>&1 && break
+    sleep 5
+  done
+  /usr/local/bin/git-compose-sync --force
+) &
+EOF
+
+# ---------------------------------------------------------------
+# Toutes les 15 min : git pull, relance seulement si changement
+# ---------------------------------------------------------------
+mkdir -p "$tmp"/etc/periodic/15min
+makefile root:root 0755 "$tmp"/etc/periodic/15min/git-compose <<'EOF'
+#!/bin/sh
+/usr/local/bin/git-compose-sync
+EOF
+
+# ---------------------------------------------------------------
+# Services système
+# ---------------------------------------------------------------
+rc_add devfs sysinit
+rc_add dmesg sysinit
+rc_add mdev sysinit
+rc_add hwdrivers sysinit
+rc_add modloop sysinit
+
+rc_add hwclock boot
+rc_add modules boot
+rc_add sysctl boot
+rc_add hostname boot
+rc_add bootmisc boot
+rc_add syslog boot
+rc_add networking boot
+rc_add loadkmap boot
+
+rc_add cgroups default
+rc_add chronyd default
+rc_add sshd default
+rc_add crond default
+rc_add docker default
+rc_add local default
+
+rc_add mount-ro shutdown
+rc_add killprocs shutdown
+rc_add savecache shutdown
+
+# ---------------------------------------------------------------
+# Archive de l'overlay (etc + usr pour le script)
+# ---------------------------------------------------------------
+tar -c -C "$tmp" etc usr | gzip -9n > "$HOSTNAME".apkovl.tar.gz
+GENEOF
+chmod +x genapkovl-ops.sh
